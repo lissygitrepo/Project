@@ -6,22 +6,40 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
-from sqlalchemy import inspect, select, text
+# from sqlalchemy import inspect, select, text
+from sqlalchemy import func, inspect, select, text
 from models import Document, DocumentChunkMeta, QueryLog, User
+from profile_routes import router as profile_router
+from analytics_routes import router as analytics_router
 
 load_dotenv()  # keep this before importing modules that read env vars
 
 from auth import get_current_user, require_instructor, router as auth_router
 from database import Base, engine, get_db
-from guardrails import check_context_relevance, validate_query
+from guardrails import OUT_OF_DOMAIN_MESSAGE, check_context_relevance, validate_query
 from ingestion import SUPPORTED_EXTENSIONS, collection, ingest_document
 from models import Document, QueryLog, User
 from retrieval import retrieve_relevant_chunks
 from tutor import generate_answer
 from quiz_routes import router as quiz_router
 from adaptive_routes import router as adaptive_router
+from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(title="AI Learning Assistant API")
+app.include_router(profile_router)
+app.include_router(analytics_router)
+
+
+allowed_origins = os.getenv("FRONTEND_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[o.strip() for o in allowed_origins],
+    allow_credentials=False,   # we authenticate with the Authorization header, not cookies
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 Base.metadata.create_all(bind=engine)  # creates any missing tables on startup
 app.include_router(auth_router)
@@ -114,6 +132,28 @@ def list_topics(db: Session = Depends(get_db), user: User = Depends(get_current_
     ).all()
     return {"topics": rows}
 
+@app.get("/documents")
+def list_documents(db: Session = Depends(get_db), instructor: User = Depends(require_instructor)):
+    """Instructor-only: everything uploaded so far, with chunk counts."""
+    rows = db.execute(
+        select(Document, func.count(DocumentChunkMeta.id))
+        .outerjoin(DocumentChunkMeta, DocumentChunkMeta.document_id == Document.id)
+        .group_by(Document.id)
+        .order_by(Document.uploaded_at.desc())
+    ).all()
+    return {
+        "documents": [
+            {
+                "id": d.id,
+                "filename": d.filename,
+                "topic": d.topic,
+                "chunks": n,
+                "uploaded_at": d.uploaded_at,
+            }
+            for d, n in rows
+        ]
+    }
+
 
 @app.post("/query")
 def handle_query(
@@ -141,7 +181,7 @@ def handle_query(
 
     # Step 3: context relevance check (FR-2, out-of-domain detection)
     if not check_context_relevance(chunks):
-        message = "This question doesn't appear to relate to the uploaded course material."
+        message = OUT_OF_DOMAIN_MESSAGE
         log(True, message)
         return {"status": "out_of_domain", "message": message}
 

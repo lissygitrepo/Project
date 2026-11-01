@@ -9,7 +9,15 @@ from auth import get_current_user
 from database import get_db
 from models import Assessment, Document, MasteryScore, Quiz, User, utcnow
 from quiz import NoMaterialError, QuizGenerationError, generate_quiz_questions
-from scheduler import REMEDIATION_THRESHOLD, resolve_remediation, trigger_remediation
+from scheduler import (
+    REMEDIATION_THRESHOLD,
+    build_learning_path,
+    resolve_remediation,
+    trigger_remediation,
+)
+
+from profiling import refresh_profile
+
 
 router = APIRouter(tags=["quiz"])
 
@@ -53,6 +61,13 @@ def generate_quiz(body: GenerateRequest, db: Session = Depends(get_db), user: Us
     if not db.scalar(select(Document.id).where(Document.topic == topic).limit(1)):
         raise HTTPException(status_code=404, detail=f"No material uploaded for topic '{topic}'.")
 
+    path = build_learning_path(db, user.id)
+    topic_status = next((t["status"] for t in path["path"] if t["topic"] == topic), None)
+    if topic_status == "locked":
+        raise HTTPException(
+            status_code=403,
+            detail="This topic is locked until you clear your review topics.",
+        )
     try:
         questions = generate_quiz_questions(topic, body.num_questions)
     except NoMaterialError as e:
@@ -114,6 +129,12 @@ def submit_quiz(quiz_id: uuid.UUID, body: SubmitRequest,
     else:
         resolve_remediation(db, user.id, quiz.topic)
     db.commit()
+        # Keep the learning profile current; a profiling error must never break quiz scoring
+    try:
+        refresh_profile(db, user.id)
+    except Exception as e:
+        db.rollback()
+        print(f"[profiling] profile refresh failed: {e}")
 
     return {
         "topic": quiz.topic,

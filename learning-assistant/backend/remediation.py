@@ -37,7 +37,7 @@ def _gather_material(topic: str, missed: list[dict]) -> list[dict]:
     return chunks
 
 
-def generate_review(topic: str, missed: list[dict]) -> dict:
+def generate_review(topic: str, missed: list[dict], style_hint: str = "") -> dict:
     chunks = _gather_material(topic, missed)
     if not chunks:
         raise ValueError(f"No material found for topic '{topic}'.")
@@ -65,7 +65,7 @@ def generate_review(topic: str, missed: list[dict]) -> dict:
     response = client.chat.completions.create(
         model=MODEL_NAME,
         messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": SYSTEM_PROMPT + style_hint},
             {"role": "user", "content": user_prompt},
         ],
         temperature=0.3,
