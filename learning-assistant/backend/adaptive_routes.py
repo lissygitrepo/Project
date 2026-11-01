@@ -9,6 +9,7 @@ from models import Quiz, User
 from quiz_routes import require_student
 from remediation import generate_review
 from scheduler import build_learning_path, get_open_remediation
+from profiling import compute_profile, review_style_hint
 
 router = APIRouter(tags=["adaptive"])
 
@@ -51,7 +52,8 @@ def get_remediation(body: RemediationRequest, db: Session = Depends(get_db),
                 })
 
     try:
-        result = generate_review(topic, missed)
+        style_hint = review_style_hint(compute_profile(db, user.id)["key"])
+        result = generate_review(topic, missed, style_hint)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except (RuntimeError, groq.APIError) as e:

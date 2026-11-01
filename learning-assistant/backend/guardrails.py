@@ -11,6 +11,7 @@ BLOCKED_PATTERNS = [
 
 MIN_QUERY_LENGTH = 3
 MAX_QUERY_LENGTH = 1000
+OUT_OF_DOMAIN_MESSAGE = "This question doesn't appear to relate to the uploaded course material."
 
 
 def validate_query(query: str) -> dict:
